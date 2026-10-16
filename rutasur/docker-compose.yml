@@ -1,0 +1,103 @@
+# Todo el entorno con un solo comando:  docker compose up --build
+x-nodo: &nodo
+  build: .
+  image: rutasur-nodo
+  restart: unless-stopped
+  environment: &entorno
+    KAFKA_BROKERS: kafka:9092
+    MONGO_URL: mongodb://mongo:27017/?directConnection=true
+  depends_on:
+    init: { condition: service_completed_successfully }
+
+services:
+  kafka:  # un solo broker en modo KRaft (sin ZooKeeper)
+    image: apache/kafka:3.8.0
+    ports: ["29092:29092"]
+    environment:
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    volumes: [kafka-data:/var/lib/kafka/data]
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 15s
+
+  mongo:  # replica set de un nodo: necesario para change streams y transacciones
+    image: mongo:7
+    command: ["--replSet", "rs0", "--bind_ip_all"]
+    ports: ["27017:27017"]
+    volumes: [mongo-data:/data/db]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "try { rs.status().ok } catch (e) { rs.initiate({_id:'rs0',members:[{_id:0,host:'mongo:27017'}]}).ok }"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 10s
+
+  init:  # crea topics (6) e índices; termina y habilita al resto
+    build: .
+    image: rutasur-nodo
+    command: ["node", "scripts/init.js"]
+    restart: "no"
+    environment: *entorno
+    depends_on:
+      kafka: { condition: service_healthy }
+      mongo: { condition: service_healthy }
+
+  simulador:
+    <<: *nodo
+    command: ["node", "services/simulador/index.js"]
+    ports: ["4000:4000"]
+    environment:
+      <<: *entorno
+      SEMILLA: "12345"
+      ENVIOS_POR_MINUTO: "20"
+      SEGUNDOS_REALES_POR_HORA_SIM: "30"
+  proyector:
+    <<: *nodo
+    command: ["node", "services/proyector/index.js"]
+  notificaciones:
+    <<: *nodo
+    command: ["node", "services/notificaciones/index.js"]
+  reprogramacion:
+    <<: *nodo
+    command: ["node", "services/reprogramacion/index.js"]
+  monitor-sla:
+    <<: *nodo
+    command: ["node", "services/monitor-sla/index.js"]
+  analitica:
+    <<: *nodo
+    command: ["node", "services/analitica/index.js"]
+  tiempos-hub:  # cuarto indicador: solo arranca con el perfil "replay" (paso 8 de la demo)
+    <<: *nodo
+    profiles: ["replay"]
+    command: ["node", "services/tiempos-hub/index.js"]
+
+  web:
+    build: ./web
+    image: rutasur-web
+    restart: unless-stopped
+    ports: ["3000:3000"]
+    environment:
+      MONGO_URL: mongodb://mongo:27017/?directConnection=true
+      SIM_URL: http://simulador:4000
+    depends_on:
+      init: { condition: service_completed_successfully }
+
+volumes:
+  kafka-data:
+  mongo-data:

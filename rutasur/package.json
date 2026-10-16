@@ -1,0 +1,17 @@
+{
+  "name": "rutasur",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "RutaSur: logística orientada a eventos (Kafka + Node.js + MongoDB + Next.js)",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "verify": "node scripts/verify.js",
+    "lag": "node scripts/lag.js",
+    "rebuild": "sh scripts/rebuild.sh"
+  },
+  "dependencies": {
+    "kafkajs": "^2.2.4",
+    "mongodb": "^6.8.0"
+  }
+}
